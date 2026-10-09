@@ -20,7 +20,7 @@ set -Eeuo pipefail
 # Unter "su" (ohne "-") fehlt /usr/sbin im Pfad (useradd, visudo, sshd ...).
 export PATH="$PATH:/usr/sbin:/sbin"
 
-SCRIPT_VERSION="1.2.0"
+SCRIPT_VERSION="1.2.1"
 
 # --- Einstellungen ---------------------------------------------------------------------------------
 # Öffentlicher Schlüssel des Ansible-Servers; leer = das Skript fragt im Modul "ansible" danach.
@@ -31,7 +31,7 @@ OLD_ANSIBLE_KEY_MARKER="${ANSIBLE_REPLACE_COMMENT:-}"
 ANSIBLE_USER="ansible"
 DEFAULT_TZ="Europe/Berlin"
 # Verschlüsselter persönlicher Block (nur öffentliche Schlüssel), wird mit der versteckten Option geöffnet.
-PERSONAL_BLOB=""
+PERSONAL_BLOB="U2FsdGVkX1+NUNHvIHYlC6G0+NrwOYO9GnqfUmqZ+h0Kg8zJlwU5f2MV+/UnaBR7kWutIU15cRoG4UYiPR89YDaqEoN3aLRMZXSa5xvH5HUVSmlbSnrkECbNKu7c2uzPPg2tva5jxVj+SUTXdSsiCXqrg3PRkAEwi8cpO/PAUE8dM2MhZi3QiaViXPrbxCEQXYY5y3vq9eQINBobUBVysDpcnUoyo53CmYgHcbgkQZShaQH5XRq8hyGP4AlQBjsv8YomUL1c9xgDrLSjKAltvGUmbG3YvoyUCOKQtr5L23QdYkJSN2Bzo/pntxp1oltVtoLE7r1W8c9m64ZFp++XVU6c1/m3Dy0FFAQDdco6+nD59z7H42XuLSxeHge5EacYrn/A1schYhQYvo/gBu5oyaPL4RXF6C0dI6GZsXyT1iqid8R66yoKBO8rAPWgIz8aENVxsMAYRr9TbJbCgD1Fi+T4LdENFnAYJpUbP7ADwks/LDQgSg0k4rUmhBrgG8ULA6mEMT1rWU+XyRseT0OgcU22/CHWpKSGuWUQ9vw1o98ZfD0AkF/AoRB69cFxSvNP3FLKbBlYL6FPcvW2kAW3H13B7j3Tp7atKh2TIhDPgFkDrZ9GFdcTknM06CXkBtddo29kw/piM3Bu6r4NLwtgwLWr/o5gx92WapaLzOhmUgwB8JKmA+n7KJbzNTQOtfl9wEjl1J6SfP0oNKJ1oc9CJKQPyS3ayl1Scq0DYJxnGm8pc0dJpgya+uQ1sMcbTjL+GS0Ge5gocaaOu4ysG9z4hQmfUQmbM2hCSg1bfsl70TKwXlcjws4smYayEf70OX7rtaK0/IDftBXQuEGhMPAOxaFlWPTmTNlskJmf1deXib6gSJFEOHqIoD8CxZDHt7fM7OrBGZXmQWSvnNbgYldwhFfEwLhz48asGXRc6lqPWVGt04mKC+I2tYk4hOw3rwPMhwFv4eiummsIHzE0K8SaajAetkQHIBhX+tmAeaJOQgXnOiBKGQbSMMEATfWYn+jZiCohPpuv5430RsrJ3bFEbUnyr1jQL7mf/zCC+QC26cqsQJLA3YAWk7zwZxYDYu9NnKOC3/DzGTKwDDSzJsF16WzloW5iQvs7j2bL9+4dbBzaELC4rYSLh1MtPwiE/uTqRCD/ZtJhynORWAudXdOvVraFTE2Eps3EqNsqGi3khDZwOBt9tVSFz81Kc5JmsrtAFCZX8C7n6+eEGmFU3plwq1JmQV5lm/UYw1Ni2kjNojY="
 
 # --- Zustand ---------------------------------------------------------------------------------------
 ASSUME_YES=0
