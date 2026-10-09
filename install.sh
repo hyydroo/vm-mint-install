@@ -20,7 +20,7 @@ set -Eeuo pipefail
 # Unter "su" (ohne "-") fehlt /usr/sbin im Pfad (useradd, visudo, sshd ...).
 export PATH="$PATH:/usr/sbin:/sbin"
 
-SCRIPT_VERSION="1.2.1"
+SCRIPT_VERSION="1.2.2"
 
 # --- Einstellungen ---------------------------------------------------------------------------------
 # Öffentlicher Schlüssel des Ansible-Servers; leer = das Skript fragt im Modul "ansible" danach.
@@ -430,45 +430,28 @@ EOF
 # --- Modul: automatische Sicherheitsupdates --------------------------------------------------------
 mod_updates() {
   step "Automatische Sicherheitsupdates"
-  ask_yn "Sicherheitsupdates automatisch installieren (unattended-upgrades)?" y || return 0
+  local conf="/etc/apt/apt.conf.d/20auto-upgrades"
+  # Zweiter Durchlauf: war es von diesem Skript aktiviert, lässt es sich hier wieder abschalten.
+  if [[ -f $conf ]] && grep -q "vm-mint-install" "$conf" 2>/dev/null; then
+    info "Sicherheitsupdates sind aktiv (von diesem Skript eingerichtet)."
+    if ask_yn "Jetzt deaktivieren und entfernen?" n; then
+      if ((DRY_RUN)); then
+        info "[dry-run] $conf löschen, unattended-upgrades entfernen"
+      else
+        rm -f "$conf"
+        env DEBIAN_FRONTEND=noninteractive apt-get purge -y -qq unattended-upgrades >/dev/null
+      fi
+      ok "Automatische Sicherheitsupdates deaktiviert und entfernt"; done_note "unattended-upgrades entfernt"
+    fi
+    return 0
+  fi
+  ask_yn "Sicherheitsupdates automatisch installieren (unattended-upgrades)?" n || return 0
   apt_install unattended-upgrades
   if ((!DRY_RUN)); then
-    printf 'APT::Periodic::Update-Package-Lists "1";\nAPT::Periodic::Unattended-Upgrade "1";\n' >/etc/apt/apt.conf.d/20auto-upgrades
+    printf '// von vm-mint-install; rückgängig: Skript erneut mit --only=updates starten\nAPT::Periodic::Update-Package-Lists "1";\nAPT::Periodic::Unattended-Upgrade "1";\n' >"$conf"
   fi
-  ok "Sicherheitsupdates aktiv (kein automatischer Neustart)"; done_note "unattended-upgrades"
-}
-
-# --- Modulauswahl ----------------------------------------------------------------------------------
-module_known() { local id; for id in "${MODULE_IDS[@]}"; do [[ $id == "$1" ]] && return 0; done; return 1; }
-
-# --only=a,b -> alles andere überspringen
-apply_only() {
-  local id name picked=","
-  for name in ${ONLY//,/ }; do
-    module_known "$name" || die "Unbekanntes Modul: $name (erlaubt: ${MODULE_IDS[*]})"
-    picked+="$name,"
-  done
-  SKIP=","
-  for id in "${MODULE_IDS[@]}"; do [[ $picked == *",$id,"* ]] || SKIP+="$id,"; done
-}
-
-# Startmenü: alles oder einzelne Punkte
-choose_modules() {
-  local reply n i picked=","
-  printf '\n%sWas soll eingerichtet werden?%s\n' "$C_BOLD" "$C_RESET"
-  info "  1) Alles durchlaufen (empfohlen)"
-  info "  2) Einzelne Punkte auswählen"
-  reply="$(ask_text "Auswahl" "1")"
-  [[ $reply == 2 ]] || return 0
-  printf '\n'
-  for i in "${!MODULE_IDS[@]}"; do info "  $((i + 1))) ${MODULE_LABELS[$i]}"; done
-  reply="$(ask_text "Nummern mit Leerzeichen getrennt (z. B. 1 3 5)" "")"
-  for n in ${reply//,/ }; do
-    if [[ $n =~ ^[0-9]+$ ]] && ((n >= 1 && n <= ${#MODULE_IDS[@]})); then picked+="${MODULE_IDS[$((n - 1))]},"; else warn "Ungültige Nummer übersprungen: $n"; fi
-  done
-  [[ $picked != "," ]] || die "Nichts ausgewählt."
-  SKIP=","
-  for i in "${MODULE_IDS[@]}"; do [[ $picked == *",$i,"* ]] || SKIP+="$i,"; done
+  ok "Sicherheitsupdates aktiv (kein automatischer Neustart). Rückgängig: Skript erneut starten (Modul updates)"
+  done_note "unattended-upgrades"
 }
 
 # --- Aufräumen -------------------------------------------------------------------------------------

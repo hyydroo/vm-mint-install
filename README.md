@@ -20,12 +20,21 @@ Standard (Enter = Ja bzw. der angezeigte Wert).
 | **ssh** | Admin-Schlüssel für root von GitHub (`github.com/<benutzer>.keys`) oder eingefügt; optional Passwort-Login aus und root nur mit Schlüssel. Konfiguration als Drop-in `/etc/ssh/sshd_config.d/01-vm-mint.conf`, vor dem Laden mit `sshd -t` geprüft |
 | **ansible** | Benutzer `ansible` mit Python 3, sudo ohne Passwort und dem Public Key deines Ansible-Servers (wird abgefragt). Optional ersetzt es einen älteren Schlüssel anhand seines Kommentars, andere Schlüssel in `authorized_keys` bleiben erhalten |
 | **docker** | Docker CE aus dem offiziellen Repository mit Compose- und Buildx-Plugin, optional Log-Rotation (10 MB, 3 Dateien) und Benutzer in der Gruppe `docker` |
-| **updates** | Automatische Sicherheitsupdates (`unattended-upgrades`, ohne automatischen Neustart) |
+| **updates** | Optional (Standard **Nein**): automatische Sicherheitsupdates (`unattended-upgrades`, ohne automatischen Neustart). Ein zweiter Durchlauf mit `--only=updates` bietet an, sie wieder zu deaktivieren |
 
 ## Einzelne Module
 
 Jedes Modul läuft auch allein, z. B. nur den Ansible-Benutzer auf einer bestehenden VM: `--only=ansible`. Fehlende Pakete
 (`sudo`, `python3`, `openssh`, `curl`) installiert das jeweilige Modul selbst.
+
+## Sicherheitsupdates wieder abschalten
+
+Per Skript: erneut `--only=updates` starten und die Frage „Jetzt deaktivieren und entfernen?“ mit `j` beantworten.
+Von Hand:
+
+```bash
+rm /etc/apt/apt.conf.d/20auto-upgrades && apt-get purge -y unattended-upgrades
+```
 
 ## Keine Überreste
 
