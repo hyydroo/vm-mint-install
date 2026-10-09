@@ -13,32 +13,33 @@
 #            --version, --help
 # Ohne --only/--skip fragt das Skript am Anfang: alles durchlaufen oder einzelne Punkte wählen.
 # Umgebungsvariablen (vor allem mit --yes): ADMIN_GITHUB_USER, ADMIN_PUBKEY, NEW_HOSTNAME, TZ_NAME,
-#            ANSIBLE_PUBKEY, DOCKER_USER
+#            ANSIBLE_PUBKEY, ANSIBLE_REPLACE_COMMENT, DOCKER_USER
 
 set -Eeuo pipefail
 
 # Unter "su" (ohne "-") fehlt /usr/sbin im Pfad (useradd, visudo, sshd ...).
 export PATH="$PATH:/usr/sbin:/sbin"
 
-SCRIPT_VERSION="1.1.0"
+SCRIPT_VERSION="1.2.0"
 
 # --- Einstellungen ---------------------------------------------------------------------------------
-# Öffentlicher Schlüssel des Ansible-Servers (Orchestrator). Öffentliche Schlüssel sind unkritisch.
-ANSIBLE_PUBKEY="${ANSIBLE_PUBKEY:-ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHSL872/9BAJUGrigK0a5eSqdvp4tSx2JISO9alKN2Rz ansible@svc-hy-ansible}"
-# Schlüssel mit diesem Kommentar werden aus authorized_keys des Ansible-Benutzers entfernt und durch den neuen
-# ersetzt (der neue Schlüssel trägt denselben Kommentar, ältere Schlüssel mit diesem Kommentar verschwinden).
-OLD_ANSIBLE_KEY_MARKER="ansible@svc-hy-ansible"
+# Öffentlicher Schlüssel des Ansible-Servers; leer = das Skript fragt im Modul "ansible" danach.
+ANSIBLE_PUBKEY="${ANSIBLE_PUBKEY:-}"
+# Kommentar eines alten Schlüssels, der aus authorized_keys des Ansible-Benutzers entfernt und durch den neuen
+# ersetzt wird (leer = nichts entfernen).
+OLD_ANSIBLE_KEY_MARKER="${ANSIBLE_REPLACE_COMMENT:-}"
 ANSIBLE_USER="ansible"
-# Persönlicher Admin-Schlüssel für root (öffentlich, aus dem alten vm-freshinstall übernommen).
-# Wird nur eingetragen, wenn du ihn im SSH-Modul auswählst (mit --yes: Standard, siehe README).
-ADMIN_PUBKEY_BUILTIN="ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDM6Sqtu46Ef7701w4DdkOhw/PxT3aQPU+DKFxYUwdwSNMkka5IObBzRWHDLfGItKsj4WOcsvGI+aODThExXKzKaaUzljUyF3+eoXWJ8W4f7a3R66i7AydyFY/uVrNBA6VzqLEOYPCOJ6dKYNag6fycRI82RHfD1VE+NnqX/G1IOqIP2e4qvIVE+0fgLRvawBiegw/Uik6FEVNcmapuNp3UnHk5PuqQU3I+eGk8QBs+sy/H/3qr2kqL5jhe3UCRGCfKlAc1N1UT2zc6Q1wcAVkC4ipnpOix4OHDyP8K6xhaI/c0qvrtI8MyncbWvxwydSySXcjHMvfmH9m6j8R0n8EL5Rpyx1+1bJ0/vZIDgAkwRmi+h+JufpwjxjBf3XLid8026aLvvhrOD+MBsczCb9D7jzPlYPIiQkY6pnwUz2zF1PyihSc0ZovrE0aTmRIp7n3XHH0VxfLKtjQd/btnEIPByC0Q2PYfjIi3DQOldDXyZPQNKlrQQ9kwAiVr706Jr/2MHUBBoXb94tqyj/QIgR7R0nXqiPT1FcvI/iVW7oQriavJh3JOrS/9hU3RdDz54OMOjJ62ivtr8/Rm35qTVqo1jgFjfF0zv1CWLfErsfVTkse8ai5VClW2qLZ8J9Q4dCeSSIty9LBd1e1Yd0d2w/oIvP08IT24l5K5flsB6dCndQ== root-admin"
 DEFAULT_TZ="Europe/Berlin"
+# Verschlüsselter persönlicher Block (nur öffentliche Schlüssel), wird mit der versteckten Option geöffnet.
+PERSONAL_BLOB=""
 
 # --- Zustand ---------------------------------------------------------------------------------------
 ASSUME_YES=0
 DRY_RUN=0
 SKIP=","
 ONLY=""
+PERSONAL=0
+SEAL=0
 SELECTION_GIVEN=0
 APT_UPDATED=0
 MODULE_IDS=(base prompt ssh ansible docker updates)
@@ -52,6 +53,7 @@ MODULE_LABELS=(
 )
 SUMMARY=()
 ADMIN_KEY_INSTALLED=0
+ANSIBLE_DONE=0
 WORK=""
 SELF_FILE=""
 SELF_DELETE=0
@@ -161,6 +163,48 @@ put_block() {
   rm -f "$tmp"
 }
 
+# --- Persönlicher Block (versteckte Optionen --personal / --seal) ----------------------------------
+PERSONAL_CIPHER=(openssl enc -aes-256-cbc -pbkdf2 -iter 200000)
+
+# Verschlüsselt Schlüssel mit einem Passwort und gibt den Block zum Eintragen in PERSONAL_BLOB aus.
+seal_personal() {
+  command -v openssl >/dev/null 2>&1 || die "openssl fehlt"
+  local root ansible marker pw pw2 plain default_pub=""
+  [[ -r $HOME/.ssh/orchestrator_ed25519.pub ]] && default_pub="$(cat "$HOME/.ssh/orchestrator_ed25519.pub")"
+  root="${ROOT_KEY:-$(ask_text "Root-Admin-Schlüssel (Public Key einfügen)" "")}"
+  ansible="${ANSIBLE_KEY:-$(ask_text "Ansible-Schlüssel (Public Key)" "$default_pub")}"
+  marker="${REPLACE_COMMENT:-$(ask_text "Kommentar des alten Ansible-Schlüssels (wird ersetzt)" "ansible@svc-hy-ansible")}"
+  ensure_keygen
+  [[ -z $root ]] || valid_pubkey "$root" || die "Root-Schlüssel ist ungültig"
+  [[ -z $ansible ]] || valid_pubkey "$ansible" || die "Ansible-Schlüssel ist ungültig"
+  read -r -s -p "  Passwort für den Block: " pw </dev/tty; printf '\n'
+  read -r -s -p "  Passwort wiederholen:   " pw2 </dev/tty; printf '\n'
+  [[ -n $pw && $pw == "$pw2" ]] || die "Passwörter leer oder verschieden"
+  plain="$(printf 'ROOT_KEY=%s\nANSIBLE_KEY=%s\nREPLACE_COMMENT=%s\n' "$root" "$ansible" "$marker")"
+  printf '\nPERSONAL_BLOB="%s"\n' "$(PW="$pw" "${PERSONAL_CIPHER[@]}" -salt -a -A -pass env:PW <<<"$plain")"
+}
+
+# Öffnet den Block mit dem Passwort und setzt ADMIN_PUBKEY, ANSIBLE_PUBKEY und OLD_ANSIBLE_KEY_MARKER.
+personal_load() {
+  [[ -n $PERSONAL_BLOB ]] || die "In diesem Skript ist kein persönlicher Block hinterlegt."
+  command -v openssl >/dev/null 2>&1 || apt_install openssl
+  local pw="${PERSONAL_PASS:-}" plain="" try line
+  for try in 1 2 3; do
+    if [[ -z $pw ]]; then read -r -s -p "  Passwort: " pw </dev/tty; printf '\n'; fi
+    if plain="$(PW="$pw" "${PERSONAL_CIPHER[@]}" -d -a -A -pass env:PW <<<"$PERSONAL_BLOB" 2>/dev/null)" && [[ -n $plain ]]; then break; fi
+    plain=""; pw=""; warn "Falsches Passwort ($try/3)"
+  done
+  [[ -n $plain ]] || die "Persönlicher Block konnte nicht geöffnet werden."
+  while IFS= read -r line; do
+    case "${line%%=*}" in
+      ROOT_KEY) ADMIN_PUBKEY="${line#*=}" ;;
+      ANSIBLE_KEY) ANSIBLE_PUBKEY="${line#*=}" ;;
+      REPLACE_COMMENT) OLD_ANSIBLE_KEY_MARKER="${line#*=}" ;;
+    esac
+  done <<<"$plain"
+  ok "Persönlicher Block geöffnet"
+}
+
 # --- Modul: Basis ----------------------------------------------------------------------------------
 mod_base() {
   step "Basis: Pakete, Zeitzone, Hostname"
@@ -238,22 +282,20 @@ mod_ssh() {
     keys="$ADMIN_PUBKEY"
   elif [[ -n ${ADMIN_GITHUB_USER:-} ]]; then
     keys="$(fetch_github_keys "$ADMIN_GITHUB_USER")"
-  elif ((ASSUME_YES)); then
-    keys="$ADMIN_PUBKEY_BUILTIN"
-  else
+  elif ((!ASSUME_YES)); then
     info "Welcher Schlüssel soll für root auf diese VM?"
-    info "  1) eingebauter Admin-Schlüssel (root-admin, aus dem alten Skript)"
-    info "  2) von GitHub laden (https://github.com/<benutzer>.keys)"
-    info "  3) Public Key einfügen"
-    info "  4) überspringen"
+    info "  1) von GitHub laden (https://github.com/<benutzer>.keys)"
+    info "  2) Public Key einfügen"
+    info "  3) überspringen"
     choice="$(ask_text "Auswahl" "1")"
     case "$choice" in
-      1) keys="$ADMIN_PUBKEY_BUILTIN" ;;
-      2) user="$(ask_text "GitHub-Benutzername" "hyydroo")"; keys="$(fetch_github_keys "$user")"
-         [[ -z $keys ]] && warn "Keine Schlüssel bei GitHub für '$user' gefunden" ;;
-      3) keys="$(ask_text "Public Key (eine Zeile, ssh-ed25519 ...)" "")" ;;
+      1) user="$(ask_text "GitHub-Benutzername" "")"
+         if [[ -n $user ]]; then keys="$(fetch_github_keys "$user")"; [[ -z $keys ]] && warn "Keine Schlüssel bei GitHub für '$user' gefunden"; fi ;;
+      2) keys="$(ask_text "Public Key (eine Zeile, ssh-ed25519 ...)" "")" ;;
       *) : ;;
     esac
+  else
+    warn "Mit --yes braucht das SSH-Modul ADMIN_PUBKEY oder ADMIN_GITHUB_USER, übersprungen"
   fi
 
   local count=0 line
@@ -307,10 +349,18 @@ mod_ansible() {
   step "Ansible-Benutzer"
   ask_yn "Benutzer '$ANSIBLE_USER' mit Schlüssel und sudo einrichten?" y || return 0
   ensure_keygen
+  if [[ -z $ANSIBLE_PUBKEY ]]; then
+    if ((ASSUME_YES)); then warn "Mit --yes braucht das Modul ANSIBLE_PUBKEY, übersprungen"; return 0; fi
+    ANSIBLE_PUBKEY="$(ask_text "Public Key des Ansible-Servers (Enter = überspringen)" "")"
+    [[ -n $ANSIBLE_PUBKEY ]] || { warn "Kein Schlüssel angegeben, Modul übersprungen"; return 0; }
+    if [[ -z $OLD_ANSIBLE_KEY_MARKER ]]; then
+      OLD_ANSIBLE_KEY_MARKER="$(ask_text "Kommentar eines alten Schlüssels, der ersetzt werden soll (Enter = keiner)" "")"
+    fi
+  fi
   valid_pubkey "$ANSIBLE_PUBKEY" || die "ANSIBLE_PUBKEY ist kein gültiger öffentlicher Schlüssel"
   apt_install python3 sudo
   if ((DRY_RUN)); then
-    info "[dry-run] Benutzer $ANSIBLE_USER anlegen, neuen Schlüssel eintragen, ältere Schlüssel mit Kommentar $OLD_ANSIBLE_KEY_MARKER ersetzen, sudoers"
+    info "[dry-run] Benutzer $ANSIBLE_USER anlegen, Schlüssel eintragen${OLD_ANSIBLE_KEY_MARKER:+, Schlüssel mit Kommentar $OLD_ANSIBLE_KEY_MARKER ersetzen}, sudoers"
   else
     id "$ANSIBLE_USER" >/dev/null 2>&1 || useradd -m -s /bin/bash "$ANSIBLE_USER"
     install_key "$ANSIBLE_USER" "$ANSIBLE_PUBKEY" "$OLD_ANSIBLE_KEY_MARKER"
@@ -319,8 +369,9 @@ mod_ansible() {
     visudo -cf "$tmp" >/dev/null || die "sudoers-Datei ungültig"
     install -m 440 "$tmp" "/etc/sudoers.d/$ANSIBLE_USER"
   fi
-  ok "Benutzer $ANSIBLE_USER bereit, alter Schlüssel ersetzt, sudo ohne Passwort"
-  done_note "Ansible-Benutzer mit neuem Schlüssel (ed25519), alter Schlüssel entfernt"
+  ok "Benutzer $ANSIBLE_USER bereit, Schlüssel eingetragen, sudo ohne Passwort"
+  ANSIBLE_DONE=1
+  done_note "Ansible-Benutzer mit Schlüssel (${ANSIBLE_PUBKEY##* })"
 }
 
 # --- Modul: Docker ---------------------------------------------------------------------------------
@@ -440,6 +491,8 @@ main() {
     case "$arg" in
       --yes|-y) ASSUME_YES=1 ;;
       --dry-run) DRY_RUN=1 ;;
+      --personal) PERSONAL=1 ;;
+      --seal) SEAL=1 ;;
       --only=*) ONLY="${arg#--only=}"; SELECTION_GIVEN=1 ;;
       --skip=*) SKIP=",${arg#--skip=},"; SELECTION_GIVEN=1 ;;
       --version|-V) printf '%s
@@ -454,6 +507,7 @@ main() {
   if [[ -n $src && -f $src && $src != /dev/* && $src != /proc/* ]]; then SELF_FILE="$(readlink -f -- "$src")"; fi
 
   printf '%s\n  vm-mint-install %s%s\n' "$C_BOLD" "$SCRIPT_VERSION" "$C_RESET"
+  if ((SEAL)); then seal_personal; exit 0; fi
   if ((DRY_RUN)); then
     warn "Trockenlauf: es wird nichts verändert."
   else
@@ -463,6 +517,8 @@ main() {
     export DEBIAN_FRONTEND=noninteractive
     info "System: $(. /etc/os-release && echo "${PRETTY_NAME:-unbekannt}")"
   fi
+
+  if ((PERSONAL)); then personal_load; fi
 
   if [[ -n $ONLY ]]; then apply_only; elif ((!SELECTION_GIVEN && !ASSUME_YES)); then choose_modules; fi
 
@@ -496,7 +552,7 @@ main() {
   local item
   for item in "${SUMMARY[@]}"; do ok "$item"; done
   if ((ADMIN_KEY_INSTALLED)); then info "Anmelden: ssh root@<VM> mit deinem Admin-Schlüssel."; fi
-  info "Ansible/Orchestrator erreicht die VM als '$ANSIBLE_USER' mit dem Schlüssel '${ANSIBLE_PUBKEY##* }'."
+  if ((ANSIBLE_DONE)); then info "Ansible erreicht die VM als '$ANSIBLE_USER' mit dem Schlüssel '${ANSIBLE_PUBKEY##* }'."; fi
 
   if ((!DRY_RUN)) && ask_yn "VM jetzt neu starten?" n; then
     info "Neustart ..."

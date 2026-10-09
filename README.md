@@ -17,8 +17,8 @@ Standard (Enter = Ja bzw. der angezeigte Wert).
 |---|---|
 | **base** | `apt update`/`upgrade`, Basispakete (`sudo curl wget git vim htop python3 openssh`), Zeitzone (Standard `Europe/Berlin`), Hostname, QEMU Guest Agent (nur auf KVM/Proxmox) |
 | **prompt** | Farbiger Bash-Prompt (Benutzer@Host, Uhrzeit, Pfad) für alle Benutzer und root, als markierter Block in `/etc/bash.bashrc` und `/root/.bashrc` (läuft beliebig oft, ersetzt sich selbst) |
-| **ssh** | Admin-Schlüssel für root zur Auswahl: **eingebauter Admin-Schlüssel** (aus dem alten Skript), von GitHub (`github.com/<benutzer>.keys`) oder eingefügt; optional Passwort-Login aus und root nur mit Schlüssel. Konfiguration als Drop-in `/etc/ssh/sshd_config.d/01-vm-mint.conf`, vor dem Laden mit `sshd -t` geprüft |
-| **ansible** | Benutzer `ansible` mit Python 3, sudo ohne Passwort und dem **neuen** Ansible-Schlüssel (ed25519). Ältere Schlüssel mit dem Kommentar `ansible@svc-hy-ansible` (der alte RSA-Schlüssel) werden ersetzt, andere Schlüssel in `authorized_keys` bleiben erhalten |
+| **ssh** | Admin-Schlüssel für root von GitHub (`github.com/<benutzer>.keys`) oder eingefügt; optional Passwort-Login aus und root nur mit Schlüssel. Konfiguration als Drop-in `/etc/ssh/sshd_config.d/01-vm-mint.conf`, vor dem Laden mit `sshd -t` geprüft |
+| **ansible** | Benutzer `ansible` mit Python 3, sudo ohne Passwort und dem Public Key deines Ansible-Servers (wird abgefragt). Optional ersetzt es einen älteren Schlüssel anhand seines Kommentars, andere Schlüssel in `authorized_keys` bleiben erhalten |
 | **docker** | Docker CE aus dem offiziellen Repository mit Compose- und Buildx-Plugin, optional Log-Rotation (10 MB, 3 Dateien) und Benutzer in der Gruppe `docker` |
 | **updates** | Automatische Sicherheitsupdates (`unattended-upgrades`, ohne automatischen Neustart) |
 
@@ -52,29 +52,28 @@ Umgebungsvariablen (vor allem mit `--yes`):
 | `ADMIN_PUBKEY` | Alternativ ein einzelner Public Key (eine Zeile) |
 | `NEW_HOSTNAME` | Hostname der VM |
 | `TZ_NAME` | Zeitzone, Standard `Europe/Berlin` |
-| `ANSIBLE_PUBKEY` | Überschreibt den eingebauten Ansible-Schlüssel |
+| `ANSIBLE_PUBKEY` | Public Key des Ansible-Servers für den Benutzer `ansible` |
+| `ANSIBLE_REPLACE_COMMENT` | Kommentar eines älteren Schlüssels, der dabei ersetzt wird |
 | `DOCKER_USER` | Benutzer für die Gruppe `docker` |
 
 Beispiel ohne Rückfragen:
 
 ```bash
-ADMIN_GITHUB_USER=meinbenutzer NEW_HOSTNAME=srv-test-01 \
+ADMIN_GITHUB_USER=meinbenutzer ANSIBLE_PUBKEY="ssh-ed25519 AAAA... ansible@server" NEW_HOSTNAME=srv-test-01 \
   bash -c "$(curl -fsSL https://raw.githubusercontent.com/hyydroo/vm-mint-install/main/install.sh)" -- --yes
 ```
 
 ## Den Ansible-Schlüssel wechseln
 
-Der öffentliche Schlüssel steht oben in `install.sh` (`ANSIBLE_PUBKEY`), der Kommentar, nach dem alte Schlüssel
-ersetzt werden, in `OLD_ANSIBLE_KEY_MARKER`. Beide anpassen, das Modul `ansible` auf bestehenden VMs erneut laufen
-lassen (`--skip=base,prompt,ssh,docker,updates`): Schlüssel mit diesem Kommentar werden durch den neuen ersetzt. Der private
-Schlüssel gehört nur auf den Ansible-Server und nie in dieses Repository.
+Das Modul `ansible` fragt nach dem Public Key des Ansible-Servers und nach dem Kommentar eines alten Schlüssels, der
+ersetzt werden soll. Ohne Rückfragen: `ANSIBLE_PUBKEY` und `ANSIBLE_REPLACE_COMMENT` setzen. Auf bestehenden VMs reicht
+`--only=ansible`. Der private Schlüssel gehört nur auf den Ansible-Server und nie in dieses Repository.
 
 ## Hinweise zur Sicherheit
 
-- **Persönliches Skript:** Es enthält Manuels öffentliche Schlüssel (Ansible-Server und root-Admin). Wer es für sich nutzt,
-  ersetzt `ANSIBLE_PUBKEY` und `ADMIN_PUBKEY_BUILTIN` oben in `install.sh`. Mit `--yes` und ohne `ADMIN_PUBKEY` bzw.
-  `ADMIN_GITHUB_USER` wird der eingebaute Admin-Schlüssel für root eingetragen.
-
+- **Keine Schlüssel im Skript:** Es trägt nur Schlüssel ein, die du angibst (GitHub-Benutzer, eingefügt oder per
+  Umgebungsvariable). Mit `--yes` ohne `ADMIN_PUBKEY`/`ADMIN_GITHUB_USER` bzw. `ANSIBLE_PUBKEY` werden die Module SSH und
+  Ansible übersprungen, nichts wird stillschweigend eingetragen.
 - Der Benutzer `ansible` bekommt `NOPASSWD:ALL` in `/etc/sudoers.d/ansible`. Das ist für Ansible üblich, setzt aber
   voraus, dass der private Schlüssel gut geschützt ist.
 - Die Passwort-Anmeldung per SSH wird nur abgeschaltet, wenn mindestens ein Admin-Schlüssel eingetragen wurde.
