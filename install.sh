@@ -20,7 +20,7 @@ set -Eeuo pipefail
 # Unter "su" (ohne "-") fehlt /usr/sbin im Pfad (useradd, visudo, sshd ...).
 export PATH="$PATH:/usr/sbin:/sbin"
 
-SCRIPT_VERSION="1.3.0"
+SCRIPT_VERSION="1.3.1"
 
 # --- Einstellungen ---------------------------------------------------------------------------------
 # Öffentlicher Schlüssel des Ansible-Servers; leer = das Skript fragt im Modul "ansible" danach.
@@ -205,26 +205,41 @@ personal_load() {
   ok "Persönlicher Block geöffnet"
 }
 
-# apt-get upgrade mit Fortschrittsbalken (liest die Statuszeilen von apt über einen eigenen Dateideskriptor).
-apt_upgrade_progress() {
-  local width=30 line kind pct filled bar label last=""
-  if [[ ! -t 1 ]]; then
-    info "Systempakete werden aktualisiert ..."
-    env DEBIAN_FRONTEND=noninteractive apt-get -y -qq upgrade >/dev/null
-    return
-  fi
+# Zeichnet aus den Statuszeilen von apt (stdin) einen Fortschrittsbalken. Format: art:paket:prozent:text
+apt_draw_bar() {
+  local line kind pkg pct label filled bar rest width=30
   while IFS= read -r line; do
-    kind="${line%%:*}"
-    [[ $kind == dlstatus || $kind == pmstatus ]] || continue
-    IFS=: read -r _ label pct _ <<<"$line"
-    pct="${pct%%.*}"; [[ $pct =~ ^[0-9]+$ ]] || continue
-    if [[ $kind == dlstatus ]]; then label="Download"; else label="Installation"; fi
-    filled=$((pct * width / 100))
-    printf -v bar '%*s' "$filled" ''; bar="${bar// /█}"
-    printf -v last '%*s' "$((width - filled))" ''; last="${last// /░}"
-    printf '\r  %s %s%s%s %3d%%\033[K' "$label" "$C_GREEN" "$bar$last" "$C_RESET" "$pct"
-  done < <(env DEBIAN_FRONTEND=noninteractive apt-get -y -qq -o APT::Status-Fd=1 -o Dpkg::Use-Pty=0 upgrade 2>/dev/null; echo "done:end:100:")
+    IFS=: read -r kind pkg pct _ <<<"$line"
+    case "$kind" in
+      pmconffile|pmerror) printf '\n' ;;   # dpkg fragt gleich nach / meldet einen Fehler: Balkenzeile verlassen
+      dlstatus|pmstatus)
+        pct="${pct%%.*}"
+        [[ $pct =~ ^[0-9]+$ ]] || continue
+        if [[ $kind == dlstatus ]]; then label="Download    "; else label="Installation"; fi
+        filled=$((pct * width / 100))
+        printf -v bar '%*s' "$filled" ''; bar="${bar// /█}"
+        printf -v rest '%*s' "$((width - filled))" ''; rest="${rest// /░}"
+        printf '\r  %s %s%s%s %3d%%' "$label" "$C_GREEN" "$bar$rest" "$C_RESET" "$pct"
+        ;;
+    esac
+  done
   printf '\r\033[K'
+}
+
+# apt-get upgrade mit Fortschrittsbalken. Ein-/Ausgabe bleiben am Terminal, damit dpkg bei geänderten
+# Konfigurationsdateien nachfragen kann (Behalten/Ersetzen); der Balken kommt über einen eigenen Deskriptor.
+apt_upgrade_progress() {
+  local -a opts=(-y -qq)
+  local rc=0
+  if [[ ! -t 1 || ! -r /dev/tty ]]; then
+    info "Systempakete werden aktualisiert ..."
+    env DEBIAN_FRONTEND=noninteractive apt-get "${opts[@]}" -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef upgrade >/dev/null || rc=$?
+  else
+    info "Hinweis: Fragt dpkg nach einer geänderten Konfigurationsdatei, hier antworten (N = alte behalten, Standard)."
+    env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get "${opts[@]}" -o APT::Status-Fd=3 upgrade 3> >(apt_draw_bar) || rc=$?
+    sleep 0.3   # dem Balken-Prozess Zeit zum Aufräumen geben
+  fi
+  ((rc == 0)) || { warn "apt upgrade meldete Fehler (Code $rc), mache mit den Basispaketen weiter"; return 0; }
 }
 
 # --- Modul: Basis ----------------------------------------------------------------------------------
