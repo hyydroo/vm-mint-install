@@ -15,12 +15,13 @@
 
 set -Eeuo pipefail
 
-SCRIPT_VERSION="1.0.0"
+SCRIPT_VERSION="1.0.1"
 
 # --- Einstellungen ---------------------------------------------------------------------------------
 # Öffentlicher Schlüssel des Ansible-Servers (Orchestrator). Öffentliche Schlüssel sind unkritisch.
-ANSIBLE_PUBKEY="${ANSIBLE_PUBKEY:-ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPJcGlcb3egfpMnbTus5mbUMpjXCVk57EcVE4FFVWDJP ansible@orchestrator}"
-# Zeilen mit diesem Kommentar werden aus authorized_keys des Ansible-Benutzers entfernt (alter Schlüssel).
+ANSIBLE_PUBKEY="${ANSIBLE_PUBKEY:-ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJvEYmDff7/kKAxiEcWbByF5kAjnoIMm1zHxy8Xq9YnR ansible@svc-hy-ansible}"
+# Schlüssel mit diesem Kommentar werden aus authorized_keys des Ansible-Benutzers entfernt und durch den neuen
+# ersetzt (der neue Schlüssel trägt denselben Kommentar, ältere Schlüssel mit diesem Kommentar verschwinden).
 OLD_ANSIBLE_KEY_MARKER="ansible@svc-hy-ansible"
 ANSIBLE_USER="ansible"
 DEFAULT_TZ="Europe/Berlin"
@@ -277,7 +278,7 @@ mod_ansible() {
   valid_pubkey "$ANSIBLE_PUBKEY" || die "ANSIBLE_PUBKEY ist kein gültiger öffentlicher Schlüssel"
   apt_install python3 sudo
   if ((DRY_RUN)); then
-    info "[dry-run] Benutzer $ANSIBLE_USER anlegen, neuen Schlüssel eintragen, alten ($OLD_ANSIBLE_KEY_MARKER) entfernen, sudoers"
+    info "[dry-run] Benutzer $ANSIBLE_USER anlegen, neuen Schlüssel eintragen, ältere Schlüssel mit Kommentar $OLD_ANSIBLE_KEY_MARKER ersetzen, sudoers"
   else
     id "$ANSIBLE_USER" >/dev/null 2>&1 || useradd -m -s /bin/bash "$ANSIBLE_USER"
     install_key "$ANSIBLE_USER" "$ANSIBLE_PUBKEY" "$OLD_ANSIBLE_KEY_MARKER"

@@ -17,7 +17,7 @@ Standard (Enter = Ja bzw. der angezeigte Wert).
 | **base** | `apt update`/`upgrade`, Basispakete (`sudo curl wget git vim htop python3 openssh`), Zeitzone (Standard `Europe/Berlin`), Hostname, QEMU Guest Agent (nur auf KVM/Proxmox) |
 | **prompt** | Farbiger Bash-Prompt (Benutzer@Host, Uhrzeit, Pfad) für alle Benutzer und root, als markierter Block in `/etc/bash.bashrc` und `/root/.bashrc` (läuft beliebig oft, ersetzt sich selbst) |
 | **ssh** | Admin-Schlüssel für root von GitHub (`github.com/<benutzer>.keys`) oder eingefügt, optional Passwort-Login aus und root nur mit Schlüssel. Konfiguration als Drop-in `/etc/ssh/sshd_config.d/01-vm-mint.conf`, vor dem Laden mit `sshd -t` geprüft |
-| **ansible** | Benutzer `ansible` mit Python 3, sudo ohne Passwort und dem **neuen** Ansible-Schlüssel (ed25519). Der alte Schlüssel (`ansible@svc-hy-ansible`) wird entfernt, andere Schlüssel in `authorized_keys` bleiben erhalten |
+| **ansible** | Benutzer `ansible` mit Python 3, sudo ohne Passwort und dem **neuen** Ansible-Schlüssel (ed25519). Ältere Schlüssel mit dem Kommentar `ansible@svc-hy-ansible` (der alte RSA-Schlüssel) werden ersetzt, andere Schlüssel in `authorized_keys` bleiben erhalten |
 | **docker** | Docker CE aus dem offiziellen Repository mit Compose- und Buildx-Plugin, optional Log-Rotation (10 MB, 3 Dateien) und Benutzer in der Gruppe `docker` |
 | **updates** | Automatische Sicherheitsupdates (`unattended-upgrades`, ohne automatischen Neustart) |
 
@@ -57,9 +57,9 @@ ADMIN_GITHUB_USER=meinbenutzer NEW_HOSTNAME=srv-test-01 \
 
 ## Den Ansible-Schlüssel wechseln
 
-Der öffentliche Schlüssel steht oben in `install.sh` (`ANSIBLE_PUBKEY`), der Kommentar des alten Schlüssels in
-`OLD_ANSIBLE_KEY_MARKER`. Beide anpassen, das Modul `ansible` auf bestehenden VMs erneut laufen lassen
-(`--skip=base,prompt,ssh,docker,updates`): Der alte Schlüssel verschwindet, der neue wird eingetragen. Der private
+Der öffentliche Schlüssel steht oben in `install.sh` (`ANSIBLE_PUBKEY`), der Kommentar, nach dem alte Schlüssel
+ersetzt werden, in `OLD_ANSIBLE_KEY_MARKER`. Beide anpassen, das Modul `ansible` auf bestehenden VMs erneut laufen
+lassen (`--skip=base,prompt,ssh,docker,updates`): Schlüssel mit diesem Kommentar werden durch den neuen ersetzt. Der private
 Schlüssel gehört nur auf den Ansible-Server und nie in dieses Repository.
 
 ## Hinweise zur Sicherheit
