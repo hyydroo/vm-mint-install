@@ -17,7 +17,7 @@ Standard (Enter = Ja bzw. der angezeigte Wert).
 |---|---|
 | **base** | `apt update`/`upgrade`, Basispakete (`sudo curl wget git vim htop python3 openssh`), Zeitzone (Standard `Europe/Berlin`), Hostname, QEMU Guest Agent (nur auf KVM/Proxmox) |
 | **prompt** | Farbiger Bash-Prompt (Benutzer@Host, Uhrzeit, Pfad) für alle Benutzer und root, als markierter Block in `/etc/bash.bashrc` und `/root/.bashrc` (läuft beliebig oft, ersetzt sich selbst) |
-| **ssh** | Admin-Schlüssel für root von GitHub (`github.com/<benutzer>.keys`) oder eingefügt; optional Passwort-Login aus und root nur mit Schlüssel. Konfiguration als Drop-in `/etc/ssh/sshd_config.d/01-vm-mint.conf`, vor dem Laden mit `sshd -t` geprüft |
+| **ssh** | Admin-Schlüssel für root von GitHub (`github.com/<benutzer>.keys`) oder eingefügt; optional Passwort-Login aus (Standard Ja) und root nur mit Schlüssel (Standard Nein, root behält also sein Passwort). Konfiguration als Drop-in `/etc/ssh/sshd_config.d/01-vm-mint.conf`, vor dem Laden mit `sshd -t` geprüft |
 | **ansible** | Benutzer `ansible` mit Python 3, sudo ohne Passwort und dem Public Key deines Ansible-Servers (wird abgefragt). Optional ersetzt es einen älteren Schlüssel anhand seines Kommentars, andere Schlüssel in `authorized_keys` bleiben erhalten |
 | **docker** | Docker CE aus dem offiziellen Repository mit Compose- und Buildx-Plugin, optional Log-Rotation (10 MB, 3 Dateien) und Benutzer in der Gruppe `docker` |
 | **updates** | Optional (Standard **Nein**): automatische Sicherheitsupdates (`unattended-upgrades`, ohne automatischen Neustart). Ein zweiter Durchlauf mit `--only=updates` bietet an, sie wieder zu deaktivieren |

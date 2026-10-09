@@ -20,7 +20,7 @@ set -Eeuo pipefail
 # Unter "su" (ohne "-") fehlt /usr/sbin im Pfad (useradd, visudo, sshd ...).
 export PATH="$PATH:/usr/sbin:/sbin"
 
-SCRIPT_VERSION="1.2.3"
+SCRIPT_VERSION="1.3.0"
 
 # --- Einstellungen ---------------------------------------------------------------------------------
 # Öffentlicher Schlüssel des Ansible-Servers; leer = das Skript fragt im Modul "ansible" danach.
@@ -205,12 +205,34 @@ personal_load() {
   ok "Persönlicher Block geöffnet"
 }
 
+# apt-get upgrade mit Fortschrittsbalken (liest die Statuszeilen von apt über einen eigenen Dateideskriptor).
+apt_upgrade_progress() {
+  local width=30 line kind pct filled bar label last=""
+  if [[ ! -t 1 ]]; then
+    info "Systempakete werden aktualisiert ..."
+    env DEBIAN_FRONTEND=noninteractive apt-get -y -qq upgrade >/dev/null
+    return
+  fi
+  while IFS= read -r line; do
+    kind="${line%%:*}"
+    [[ $kind == dlstatus || $kind == pmstatus ]] || continue
+    IFS=: read -r _ label pct _ <<<"$line"
+    pct="${pct%%.*}"; [[ $pct =~ ^[0-9]+$ ]] || continue
+    if [[ $kind == dlstatus ]]; then label="Download"; else label="Installation"; fi
+    filled=$((pct * width / 100))
+    printf -v bar '%*s' "$filled" ''; bar="${bar// /█}"
+    printf -v last '%*s' "$((width - filled))" ''; last="${last// /░}"
+    printf '\r  %s %s%s%s %3d%%\033[K' "$label" "$C_GREEN" "$bar$last" "$C_RESET" "$pct"
+  done < <(env DEBIAN_FRONTEND=noninteractive apt-get -y -qq -o APT::Status-Fd=1 -o Dpkg::Use-Pty=0 upgrade 2>/dev/null; echo "done:end:100:")
+  printf '\r\033[K'
+}
+
 # --- Modul: Basis ----------------------------------------------------------------------------------
 mod_base() {
   step "Basis: Pakete, Zeitzone, Hostname"
   apt_update_once
   if ask_yn "Systempakete aktualisieren (apt upgrade)?" y; then
-    if ((DRY_RUN)); then info "[dry-run] apt upgrade"; else env DEBIAN_FRONTEND=noninteractive apt-get -y -qq upgrade >/dev/null; fi
+    if ((DRY_RUN)); then info "[dry-run] apt upgrade"; else apt_upgrade_progress; fi
     ok "System aktualisiert"
   fi
   apt_install sudo curl wget git vim htop ca-certificates gnupg python3 openssh-client openssh-server
@@ -317,9 +339,9 @@ mod_ssh() {
     return 0
   fi
 
-  local pw_off=n root_key=y
+  local pw_off=n root_key=n
   if ask_yn "Passwort-Anmeldung per SSH abschalten (nur Schlüssel)?" y; then pw_off=y; fi
-  if ! ask_yn "root nur mit Schlüssel anmelden lassen (kein Passwort für root)?" y; then root_key=n; fi
+  if ! ask_yn "root nur mit Schlüssel anmelden lassen (kein Passwort für root)?" n; then root_key=n; else root_key=y; fi
   local conf="/etc/ssh/sshd_config.d/01-vm-mint.conf"
   if ((DRY_RUN)); then
     info "[dry-run] $conf schreiben (Passwort aus: $pw_off, root nur Key: $root_key), sshd neu laden"
@@ -329,7 +351,14 @@ mod_ssh() {
     {
       echo "# von vm-mint-install; die erste Angabe gewinnt, deshalb Dateiname 01-"
       if [[ $pw_off == y ]]; then echo "PasswordAuthentication no"; fi
-      if [[ $root_key == y ]]; then echo "PermitRootLogin prohibit-password"; else echo "PermitRootLogin yes"; fi
+      if [[ $root_key == y ]]; then
+        echo "PermitRootLogin prohibit-password"
+      else
+        echo "PermitRootLogin yes"
+        # Passwort für root bleibt erlaubt, auch wenn es für alle anderen Benutzer abgeschaltet ist
+        # (Match-Block muss am Ende der Datei stehen).
+        if [[ $pw_off == y ]]; then printf 'Match User root\n    PasswordAuthentication yes\n'; fi
+      fi
     } >"$conf"
     if sshd -t 2>/dev/null; then
       systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || warn "sshd konnte nicht neu geladen werden"
