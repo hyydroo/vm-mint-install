@@ -7,7 +7,8 @@ Durchlauf bleibt nichts davon auf der VM zurück.
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/hyydroo/vm-mint-install/main/install.sh)"
 ```
 
-Als `root` ausführen (`su -` oder `sudo -i`). Das Skript fragt Schritt für Schritt, jede Frage hat einen sinnvollen
+Als `root` ausführen (`su -` oder `sudo -i`). Zuerst fragt das Skript, ob es **alles durchlaufen** soll oder ob du
+**einzelne Punkte** auswählst (Nummern wie `1 3 5`). Danach geht es Schritt für Schritt; jede Frage hat einen sinnvollen
 Standard (Enter = Ja bzw. der angezeigte Wert).
 
 ## Was es einrichtet
@@ -16,10 +17,15 @@ Standard (Enter = Ja bzw. der angezeigte Wert).
 |---|---|
 | **base** | `apt update`/`upgrade`, Basispakete (`sudo curl wget git vim htop python3 openssh`), Zeitzone (Standard `Europe/Berlin`), Hostname, QEMU Guest Agent (nur auf KVM/Proxmox) |
 | **prompt** | Farbiger Bash-Prompt (Benutzer@Host, Uhrzeit, Pfad) für alle Benutzer und root, als markierter Block in `/etc/bash.bashrc` und `/root/.bashrc` (läuft beliebig oft, ersetzt sich selbst) |
-| **ssh** | Admin-Schlüssel für root von GitHub (`github.com/<benutzer>.keys`) oder eingefügt, optional Passwort-Login aus und root nur mit Schlüssel. Konfiguration als Drop-in `/etc/ssh/sshd_config.d/01-vm-mint.conf`, vor dem Laden mit `sshd -t` geprüft |
+| **ssh** | Admin-Schlüssel für root zur Auswahl: **eingebauter Admin-Schlüssel** (aus dem alten Skript), von GitHub (`github.com/<benutzer>.keys`) oder eingefügt; optional Passwort-Login aus und root nur mit Schlüssel. Konfiguration als Drop-in `/etc/ssh/sshd_config.d/01-vm-mint.conf`, vor dem Laden mit `sshd -t` geprüft |
 | **ansible** | Benutzer `ansible` mit Python 3, sudo ohne Passwort und dem **neuen** Ansible-Schlüssel (ed25519). Ältere Schlüssel mit dem Kommentar `ansible@svc-hy-ansible` (der alte RSA-Schlüssel) werden ersetzt, andere Schlüssel in `authorized_keys` bleiben erhalten |
 | **docker** | Docker CE aus dem offiziellen Repository mit Compose- und Buildx-Plugin, optional Log-Rotation (10 MB, 3 Dateien) und Benutzer in der Gruppe `docker` |
 | **updates** | Automatische Sicherheitsupdates (`unattended-upgrades`, ohne automatischen Neustart) |
+
+## Einzelne Module
+
+Jedes Modul läuft auch allein, z. B. nur den Ansible-Benutzer auf einer bestehenden VM: `--only=ansible`. Fehlende Pakete
+(`sudo`, `python3`, `openssh`, `curl`) installiert das jeweilige Modul selbst.
 
 ## Keine Überreste
 
@@ -32,7 +38,8 @@ Standard (Enter = Ja bzw. der angezeigte Wert).
 
 ```text
 --yes          alle Fragen mit dem Standard beantworten (für viele VMs ohne Rückfragen)
---skip=a,b     Module überspringen: base, prompt, ssh, ansible, docker, updates
+--only=a,b     nur diese Module ausführen: base, prompt, ssh, ansible, docker, updates
+--skip=a,b     diese Module überspringen (ohne --only/--skip erscheint das Startmenü)
 --dry-run      nur anzeigen, was passieren würde (ändert nichts, braucht kein root)
 --version, --help
 ```
@@ -63,6 +70,10 @@ lassen (`--skip=base,prompt,ssh,docker,updates`): Schlüssel mit diesem Kommenta
 Schlüssel gehört nur auf den Ansible-Server und nie in dieses Repository.
 
 ## Hinweise zur Sicherheit
+
+- **Persönliches Skript:** Es enthält Manuels öffentliche Schlüssel (Ansible-Server und root-Admin). Wer es für sich nutzt,
+  ersetzt `ANSIBLE_PUBKEY` und `ADMIN_PUBKEY_BUILTIN` oben in `install.sh`. Mit `--yes` und ohne `ADMIN_PUBKEY` bzw.
+  `ADMIN_GITHUB_USER` wird der eingebaute Admin-Schlüssel für root eingetragen.
 
 - Der Benutzer `ansible` bekommt `NOPASSWD:ALL` in `/etc/sudoers.d/ansible`. Das ist für Ansible üblich, setzt aber
   voraus, dass der private Schlüssel gut geschützt ist.

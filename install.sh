@@ -7,15 +7,20 @@
 # gelöscht wird; eine heruntergeladene Kopie des Skripts löscht sich auf Wunsch selbst.
 #
 # Optionen:  --yes             alle Fragen mit dem Standard beantworten (für Automatisierung)
-#            --skip=a,b        Module überspringen: base, prompt, ssh, ansible, docker, updates
+#            --only=a,b        nur diese Module ausführen: base, prompt, ssh, ansible, docker, updates
+#            --skip=a,b        diese Module überspringen
 #            --dry-run         nur anzeigen, was passieren würde (ändert nichts, braucht kein root)
 #            --version, --help
+# Ohne --only/--skip fragt das Skript am Anfang: alles durchlaufen oder einzelne Punkte wählen.
 # Umgebungsvariablen (vor allem mit --yes): ADMIN_GITHUB_USER, ADMIN_PUBKEY, NEW_HOSTNAME, TZ_NAME,
 #            ANSIBLE_PUBKEY, DOCKER_USER
 
 set -Eeuo pipefail
 
-SCRIPT_VERSION="1.0.2"
+# Unter "su" (ohne "-") fehlt /usr/sbin im Pfad (useradd, visudo, sshd ...).
+export PATH="$PATH:/usr/sbin:/sbin"
+
+SCRIPT_VERSION="1.1.0"
 
 # --- Einstellungen ---------------------------------------------------------------------------------
 # Öffentlicher Schlüssel des Ansible-Servers (Orchestrator). Öffentliche Schlüssel sind unkritisch.
@@ -24,12 +29,27 @@ ANSIBLE_PUBKEY="${ANSIBLE_PUBKEY:-ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHSL872/9B
 # ersetzt (der neue Schlüssel trägt denselben Kommentar, ältere Schlüssel mit diesem Kommentar verschwinden).
 OLD_ANSIBLE_KEY_MARKER="ansible@svc-hy-ansible"
 ANSIBLE_USER="ansible"
+# Persönlicher Admin-Schlüssel für root (öffentlich, aus dem alten vm-freshinstall übernommen).
+# Wird nur eingetragen, wenn du ihn im SSH-Modul auswählst (mit --yes: Standard, siehe README).
+ADMIN_PUBKEY_BUILTIN="ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDM6Sqtu46Ef7701w4DdkOhw/PxT3aQPU+DKFxYUwdwSNMkka5IObBzRWHDLfGItKsj4WOcsvGI+aODThExXKzKaaUzljUyF3+eoXWJ8W4f7a3R66i7AydyFY/uVrNBA6VzqLEOYPCOJ6dKYNag6fycRI82RHfD1VE+NnqX/G1IOqIP2e4qvIVE+0fgLRvawBiegw/Uik6FEVNcmapuNp3UnHk5PuqQU3I+eGk8QBs+sy/H/3qr2kqL5jhe3UCRGCfKlAc1N1UT2zc6Q1wcAVkC4ipnpOix4OHDyP8K6xhaI/c0qvrtI8MyncbWvxwydSySXcjHMvfmH9m6j8R0n8EL5Rpyx1+1bJ0/vZIDgAkwRmi+h+JufpwjxjBf3XLid8026aLvvhrOD+MBsczCb9D7jzPlYPIiQkY6pnwUz2zF1PyihSc0ZovrE0aTmRIp7n3XHH0VxfLKtjQd/btnEIPByC0Q2PYfjIi3DQOldDXyZPQNKlrQQ9kwAiVr706Jr/2MHUBBoXb94tqyj/QIgR7R0nXqiPT1FcvI/iVW7oQriavJh3JOrS/9hU3RdDz54OMOjJ62ivtr8/Rm35qTVqo1jgFjfF0zv1CWLfErsfVTkse8ai5VClW2qLZ8J9Q4dCeSSIty9LBd1e1Yd0d2w/oIvP08IT24l5K5flsB6dCndQ== root-admin"
 DEFAULT_TZ="Europe/Berlin"
 
 # --- Zustand ---------------------------------------------------------------------------------------
 ASSUME_YES=0
 DRY_RUN=0
 SKIP=","
+ONLY=""
+SELECTION_GIVEN=0
+APT_UPDATED=0
+MODULE_IDS=(base prompt ssh ansible docker updates)
+MODULE_LABELS=(
+  "Basis: Pakete, Zeitzone, Hostname"
+  "Bash-Prompt"
+  "SSH: Admin-Schlüssel für root und Absicherung"
+  "Ansible-Benutzer mit Schlüssel"
+  "Docker"
+  "Automatische Sicherheitsupdates"
+)
 SUMMARY=()
 ADMIN_KEY_INSTALLED=0
 WORK=""
@@ -85,8 +105,15 @@ run() {
   "$@"
 }
 
+apt_update_once() {
+  ((APT_UPDATED)) && return 0
+  APT_UPDATED=1
+  run apt-get update -qq
+}
+
 apt_install() {
   if ((DRY_RUN)); then info "[dry-run] apt install $*"; return 0; fi
+  apt_update_once
   env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$@" >/dev/null
 }
 
@@ -137,7 +164,7 @@ put_block() {
 # --- Modul: Basis ----------------------------------------------------------------------------------
 mod_base() {
   step "Basis: Pakete, Zeitzone, Hostname"
-  run apt-get update -qq
+  apt_update_once
   if ask_yn "Systempakete aktualisieren (apt upgrade)?" y; then
     if ((DRY_RUN)); then info "[dry-run] apt upgrade"; else env DEBIAN_FRONTEND=noninteractive apt-get -y -qq upgrade >/dev/null; fi
     ok "System aktualisiert"
@@ -205,21 +232,26 @@ fetch_github_keys() { curl -fsSL --max-time 15 "https://github.com/$1.keys" 2>/d
 mod_ssh() {
   step "SSH: Admin-Schlüssel und Absicherung"
   ensure_keygen
+  [[ -x /usr/sbin/sshd ]] || apt_install openssh-server
   local keys="" choice user
   if [[ -n ${ADMIN_PUBKEY:-} ]]; then
     keys="$ADMIN_PUBKEY"
   elif [[ -n ${ADMIN_GITHUB_USER:-} ]]; then
     keys="$(fetch_github_keys "$ADMIN_GITHUB_USER")"
-  elif ((!ASSUME_YES)); then
-    info "Wie soll dein Admin-Schlüssel für root auf diese VM kommen?"
-    info "  1) von GitHub laden (https://github.com/<benutzer>.keys)"
-    info "  2) Public Key einfügen"
-    info "  3) überspringen"
+  elif ((ASSUME_YES)); then
+    keys="$ADMIN_PUBKEY_BUILTIN"
+  else
+    info "Welcher Schlüssel soll für root auf diese VM?"
+    info "  1) eingebauter Admin-Schlüssel (root-admin, aus dem alten Skript)"
+    info "  2) von GitHub laden (https://github.com/<benutzer>.keys)"
+    info "  3) Public Key einfügen"
+    info "  4) überspringen"
     choice="$(ask_text "Auswahl" "1")"
     case "$choice" in
-      1) user="$(ask_text "GitHub-Benutzername" "hyydroo")"; keys="$(fetch_github_keys "$user")"
+      1) keys="$ADMIN_PUBKEY_BUILTIN" ;;
+      2) user="$(ask_text "GitHub-Benutzername" "hyydroo")"; keys="$(fetch_github_keys "$user")"
          [[ -z $keys ]] && warn "Keine Schlüssel bei GitHub für '$user' gefunden" ;;
-      2) keys="$(ask_text "Public Key (eine Zeile, ssh-ed25519 ...)" "")" ;;
+      3) keys="$(ask_text "Public Key (eine Zeile, ssh-ed25519 ...)" "")" ;;
       *) : ;;
     esac
   fi
@@ -295,6 +327,7 @@ mod_ansible() {
 mod_docker() {
   step "Docker"
   ask_yn "Docker (offizielles Repository) mit Compose-Plugin installieren?" y || return 0
+  apt_install ca-certificates curl gnupg
   local os_id="" codename="" like=""
   if ((DRY_RUN)); then
     info "[dry-run] Docker-Repository einrichten"
@@ -354,6 +387,39 @@ mod_updates() {
   ok "Sicherheitsupdates aktiv (kein automatischer Neustart)"; done_note "unattended-upgrades"
 }
 
+# --- Modulauswahl ----------------------------------------------------------------------------------
+module_known() { local id; for id in "${MODULE_IDS[@]}"; do [[ $id == "$1" ]] && return 0; done; return 1; }
+
+# --only=a,b -> alles andere überspringen
+apply_only() {
+  local id name picked=","
+  for name in ${ONLY//,/ }; do
+    module_known "$name" || die "Unbekanntes Modul: $name (erlaubt: ${MODULE_IDS[*]})"
+    picked+="$name,"
+  done
+  SKIP=","
+  for id in "${MODULE_IDS[@]}"; do [[ $picked == *",$id,"* ]] || SKIP+="$id,"; done
+}
+
+# Startmenü: alles oder einzelne Punkte
+choose_modules() {
+  local reply n i picked=","
+  printf '\n%sWas soll eingerichtet werden?%s\n' "$C_BOLD" "$C_RESET"
+  info "  1) Alles durchlaufen (empfohlen)"
+  info "  2) Einzelne Punkte auswählen"
+  reply="$(ask_text "Auswahl" "1")"
+  [[ $reply == 2 ]] || return 0
+  printf '\n'
+  for i in "${!MODULE_IDS[@]}"; do info "  $((i + 1))) ${MODULE_LABELS[$i]}"; done
+  reply="$(ask_text "Nummern mit Leerzeichen getrennt (z. B. 1 3 5)" "")"
+  for n in ${reply//,/ }; do
+    if [[ $n =~ ^[0-9]+$ ]] && ((n >= 1 && n <= ${#MODULE_IDS[@]})); then picked+="${MODULE_IDS[$((n - 1))]},"; else warn "Ungültige Nummer übersprungen: $n"; fi
+  done
+  [[ $picked != "," ]] || die "Nichts ausgewählt."
+  SKIP=","
+  for i in "${MODULE_IDS[@]}"; do [[ $picked == *",$i,"* ]] || SKIP+="$i,"; done
+}
+
 # --- Aufräumen -------------------------------------------------------------------------------------
 cleanup() {
   local rc=$?
@@ -361,7 +427,9 @@ cleanup() {
   if ((SELF_DELETE)) && [[ -n $SELF_FILE ]]; then rm -f -- "$SELF_FILE" 2>/dev/null || true; SELF_FILE=""; fi
   return "$rc"
 }
-on_error() { printf '%s✗ Abbruch in Zeile %s (Befehl: %s)%s\n' "$C_RED" "$1" "$2" "$C_RESET" >&2; }
+on_error() {
+  [[ $2 == exit* ]] && return 0 # bewusste Abbrüche über die()
+  printf '%s✗ Abbruch in Zeile %s (Befehl: %s)%s\n' "$C_RED" "$1" "$2" "$C_RESET" >&2; }
 trap 'on_error "$LINENO" "$BASH_COMMAND"' ERR
 trap cleanup EXIT
 
@@ -372,7 +440,8 @@ main() {
     case "$arg" in
       --yes|-y) ASSUME_YES=1 ;;
       --dry-run) DRY_RUN=1 ;;
-      --skip=*) SKIP=",${arg#--skip=}," ;;
+      --only=*) ONLY="${arg#--only=}"; SELECTION_GIVEN=1 ;;
+      --skip=*) SKIP=",${arg#--skip=},"; SELECTION_GIVEN=1 ;;
       --version|-V) printf '%s
 ' "$SCRIPT_VERSION"; exit 0 ;;
       --help|-h) usage; exit 0 ;;
@@ -394,6 +463,8 @@ main() {
     export DEBIAN_FRONTEND=noninteractive
     info "System: $(. /etc/os-release && echo "${PRETTY_NAME:-unbekannt}")"
   fi
+
+  if [[ -n $ONLY ]]; then apply_only; elif ((!SELECTION_GIVEN && !ASSUME_YES)); then choose_modules; fi
 
   # if-Form, damit "set -e" auch innerhalb der Module wirkt
   if ! skipped base; then mod_base; fi
