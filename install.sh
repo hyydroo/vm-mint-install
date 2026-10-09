@@ -20,7 +20,7 @@ set -Eeuo pipefail
 # Unter "su" (ohne "-") fehlt /usr/sbin im Pfad (useradd, visudo, sshd ...).
 export PATH="$PATH:/usr/sbin:/sbin"
 
-SCRIPT_VERSION="1.3.1"
+SCRIPT_VERSION="1.3.2"
 
 # --- Einstellungen ---------------------------------------------------------------------------------
 # Öffentlicher Schlüssel des Ansible-Servers; leer = das Skript fragt im Modul "ansible" danach.
@@ -421,7 +421,7 @@ mod_ansible() {
 # --- Modul: Docker ---------------------------------------------------------------------------------
 mod_docker() {
   step "Docker"
-  ask_yn "Docker (offizielles Repository) mit Compose-Plugin installieren?" y || return 0
+  ask_yn "Docker (offizielles Repository) mit Compose-Plugin installieren?" n || return 0
   apt_install ca-certificates curl gnupg
   local os_id="" codename="" like=""
   if ((DRY_RUN)); then
