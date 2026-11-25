@@ -20,7 +20,7 @@ set -Eeuo pipefail
 # Unter "su" (ohne "-") fehlt /usr/sbin im Pfad (useradd, visudo, sshd ...).
 export PATH="$PATH:/usr/sbin:/sbin"
 
-SCRIPT_VERSION="1.3.2"
+SCRIPT_VERSION="1.3.3"
 
 # --- Einstellungen ---------------------------------------------------------------------------------
 # Öffentlicher Schlüssel des Ansible-Servers; leer = das Skript fragt im Modul "ansible" danach.
@@ -207,9 +207,9 @@ personal_load() {
 
 # Zeichnet aus den Statuszeilen von apt (stdin) einen Fortschrittsbalken. Format: art:paket:prozent:text
 apt_draw_bar() {
-  local line kind pkg pct label filled bar rest width=30
+  local line kind pct label filled bar rest width=30
   while IFS= read -r line; do
-    IFS=: read -r kind pkg pct _ <<<"$line"
+    IFS=: read -r kind _ pct _ <<<"$line"
     case "$kind" in
       pmconffile|pmerror) printf '\n' ;;   # dpkg fragt gleich nach / meldet einen Fehler: Balkenzeile verlassen
       dlstatus|pmstatus)
